@@ -11,74 +11,52 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
-# ─────────────────────────────────────────────────────────────
-# 1. 경로 설정 (로컬 & 배포 환경 하이브리드)
-# ─────────────────────────────────────────────────────────────
+# 1. 기초 경로 설정 (OS 독립적 경로 관리)
 APP_ROOT = Path(__file__).resolve().parent
-# 배포 서버 환경(mount/src/...)에서는 APP_ROOT 하위의 data 폴더를 우선 사용합니다.
-DATA_DIR = APP_ROOT / "data"
+# Mac/Linux 호환을 위해 사용자 홈 디렉토리 기반 경로 설정 권장
+LOCAL_DATA_DIR = Path.home() / "Documents" / "final_data" 
+DEPLOY_DATA_DIR = APP_ROOT / "data"
 
-# 로컬 테스트용 절대 경로 (수정하신 기존 경로 유지 가능)
-LOCAL_DIR = APP_ROOT.parent.parent / "송원우" / "final_data"
-if LOCAL_DIR.exists():
-    DATA_DIR = LOCAL_DIR
+# 환경에 따른 데이터 디렉토리 결정
+DATA_DIR = LOCAL_DATA_DIR if LOCAL_DATA_DIR.exists() else DEPLOY_DATA_DIR
 
-PATHS = {
-    "absa":          DATA_DIR / "absa_phase_e_predictions.parquet",
-    "bert_110m":     DATA_DIR / "dashboard_reviews_110M.parquet",
-    "bert_22m":      DATA_DIR / "dashboard_reviews_22M.parquet",
-    "bert_low":      DATA_DIR / "dashboard_reviews_low.parquet",
-    "reviews":       DATA_DIR / "preprocessed_absa.parquet",
-    "topic_map":     DATA_DIR / "topic_aspect_mapping.parquet",
-    "topic_map_low": DATA_DIR / "low_topic_aspect_mapping.parquet",
+# 2. GDRIVE 데이터 정보
+GDRIVE_DATA = {
+    "reviews":       {"id": "1eSBnmXb6vaSWakPQWlnjdJItOrqeCZ_G", "name": "preprocessed_absa.parquet"},
+    "absa":          {"id": "1UTKFCjepnuWPu5imLnThTyoZWe41tipo", "name": "absa_phase_e_predictions.parquet"},
+    "bert_low":      {"id": "1AtMr8f6YV_J_i8aSo_MJ9pta3nsdnvq9", "name": "dashboard_reviews_low.parquet"},
+    "bert_22m":      {"id": "10YsxXtiqbfev40RemeqyWFdkkBCoahw9", "name": "dashboard_reviews_22M.parquet"},
+    "bert_110m":     {"id": "1uftIjOVOClHKiabsP3A0rswylSrOIf5p", "name": "dashboard_reviews_110M.parquet"},
+    "topic_map":     {"id": "1njAnnqwT0crWl8NCFICZIl2rYS9CO2h1", "name": "topic_aspect_mapping.parquet"},
+    "topic_map_low": {"id": "1mSmDz0yoFXpjA7YDJGUeomgXP7ExVM_S", "name": "low_topic_aspect_mapping.parquet"}
 }
 
-# ─────────────────────────────────────────────────────────────
-# 2. 한글 폰트 설정 (폰트 깨짐 해결)
-# ─────────────────────────────────────────────────────────────
-def setup_korean_font():
-    """Streamlit Cloud 환경에서 한글 폰트를 설치하고 설정합니다."""
-    try:
-        # 리눅스 서버용 나눔 폰트 설치 명령어 (최초 1회 실행 권장)
-        # 배포 시 패키지 매니저(packages.txt) 사용이 정석이나, 코드 내 방어 로직 추가
-        if os.name != 'nt': # 리눅스(서버) 환경일 때
-            font_path = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
-            if not os.path.exists(font_path):
-                os.system('sudo apt-get install -y fonts-nanum')
-            
-            # 폰트 적용
-            fm.fontManager.addfont(font_path)
-            plt.rc('font', family='NanumGothic')
-    except Exception as e:
-        st.warning(f"폰트 설정 중 오류 발생: {e}. 기본 폰트로 렌더링합니다.")
+PATHS = {k: DATA_DIR / v["name"] for k, v in GDRIVE_DATA.items()}
 
-# ─────────────────────────────────────────────────────────────
-# 3. 데이터 존재 확인 및 자동 다운로드 (이전 gdown 로직 유지)
-# ─────────────────────────────────────────────────────────────
-def ensure_data_exists():
+# 3. 데이터 로드 및 환경 설정 (st.cache_resource 사용으로 속도 최적화)
+@st.cache_resource
+def initialize_environment():
     import gdown
-    if not DATA_DIR.exists():
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # 폴더 생성
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     
-    # 앞서 정리한 GDRIVE_DATA 딕셔너리를 활용해 다운로드 수행
-    # (생략: 이전 답변의 GDRIVE_DATA 딕셔너리 및 다운로드 루프 삽입)
-def ensure_data_exists():
-    """
-    파일이 지정된 경로(DATA_DIR)에 없으면 구글 드라이브에서 자동으로 다운로드합니다.
-    """
-    import gdown
-    
-    # 배포 환경에서 데이터 폴더가 없으면 생성
-    if not DATA_DIR.exists():
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        
+    # 데이터 다운로드
     for key, info in GDRIVE_DATA.items():
         target_path = PATHS[key]
         if not target_path.exists():
-            with st.spinner(f"데이터 파일 다운로드 중: {info['name']}... (약 450MB 전체 용량 중 일부)"):
-                url = f"https://drive.google.com/uc?export=download&id={info['id']}"
-                # 로컬에 파일이 없을 때만 구글 드라이브에서 다운로드 수행
-                gdown.download(url, str(target_path), quiet=True)
+            url = f"https://drive.google.com/uc?export=download&id={info['id']}"
+            gdown.download(url, str(target_path), quiet=True)
+    
+    # 폰트 설정
+    linux_font = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
+    if os.path.exists(linux_font):
+        fm.fontManager.addfont(linux_font)
+        plt.rc('font', family='NanumGothic')
+    else:
+        # Mac/Windows 로컬 환경
+        plt.rc('font', family='AppleGothic' if os.name == 'posix' else 'Malgun Gothic')
+    
+    return True
 
 # ─────────────────────────────────────────────────────────────
 # 브랜드 메타 — 자사/경쟁사 구분, 색상, 표시 이름
