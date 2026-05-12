@@ -1,7 +1,8 @@
 streamlit
 pandas
+numpy
 plotly
-networkx
-gdown
 pyarrow
-fastparquet
+gdown
+wordcloud
+networkx
